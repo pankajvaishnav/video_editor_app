@@ -354,38 +354,78 @@ class _VideoEditorHomePageState extends State<VideoEditorHomePage>
   }
 
   void _handleSkipPlayback() {
-    if (_controller == null) return;
+    if (_controller == null || !_controller!.value.isPlaying) return;
 
-    // Check if current position is in a deleted segment
-    bool inDeletedSegment = _segments.any(
-      (segment) =>
-          segment.isDeleted &&
-          _currentPosition >= segment.startTime &&
-          _currentPosition <= segment.endTime,
-    );
+    final currentPos = _currentPosition;
 
-    if (inDeletedSegment) {
-      // Find next non-deleted segment
-      VideoSegment? nextSegment = _segments
-          .where(
-            (segment) =>
-                !segment.isDeleted && segment.startTime > _currentPosition,
-          )
-          .fold<VideoSegment?>(
-            null,
-            (prev, current) =>
-                prev == null || current.startTime < prev.startTime
-                ? current
-                : prev,
-          );
+    // Find the current segment by checking which segment contains current position
+    VideoSegment? currentSegment;
+    int currentSegmentIndex = -1;
+
+    for (int i = 0; i < _segments.length; i++) {
+      if (currentPos >= _segments[i].startTime &&
+          currentPos < _segments[i].endTime) {
+        currentSegment = _segments[i];
+        currentSegmentIndex = i;
+        break;
+      }
+    }
+
+    // If we're in a deleted segment, find the next non-deleted segment
+    if (currentSegment != null && currentSegment.isDeleted) {
+      VideoSegment? nextSegment;
+
+      // Look for the next non-deleted segment after the current one
+      for (int i = currentSegmentIndex + 1; i < _segments.length; i++) {
+        if (!_segments[i].isDeleted) {
+          nextSegment = _segments[i];
+          break;
+        }
+      }
 
       if (nextSegment != null) {
+        print(
+          'Skip: Jumping from ${_formatDuration(currentPos)} to ${_formatDuration(nextSegment.startTime)}',
+        );
         _controller!.seekTo(
           Duration(milliseconds: nextSegment.startTime.toInt()),
         );
+        _showSuccessDialog('⏭️ Skipped to next segment');
       } else {
+        // No more non-deleted segments, stop playback
         _controller!.pause();
-        _showSuccessDialog('🏁 Reached end of active segments');
+        _showSuccessDialog('🏁 Reached end - no more active segments');
+      }
+    }
+    // Also check if we've reached the end of a non-deleted segment and the next segment is deleted
+    else if (currentSegment != null && !currentSegment.isDeleted) {
+      // Check if we're near the end of current segment (within 100ms)
+      if (currentPos >= currentSegment.endTime - 100) {
+        // Check if next segment exists and is deleted
+        if (currentSegmentIndex + 1 < _segments.length &&
+            _segments[currentSegmentIndex + 1].isDeleted) {
+          // Find next non-deleted segment
+          VideoSegment? nextNonDeletedSegment;
+          for (int i = currentSegmentIndex + 2; i < _segments.length; i++) {
+            if (!_segments[i].isDeleted) {
+              nextNonDeletedSegment = _segments[i];
+              break;
+            }
+          }
+
+          if (nextNonDeletedSegment != null) {
+            print(
+              'Preemptive skip: Jumping to ${_formatDuration(nextNonDeletedSegment.startTime)}',
+            );
+            _controller!.seekTo(
+              Duration(milliseconds: nextNonDeletedSegment.startTime.toInt()),
+            );
+            _showSuccessDialog('⏭️ Skipped deleted segment');
+          } else {
+            _controller!.pause();
+            _showSuccessDialog('🏁 Reached end - no more active segments');
+          }
+        }
       }
     }
   }
